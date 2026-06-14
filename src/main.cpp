@@ -16,7 +16,7 @@ int main() {
 	constexpr size_t size_data = N_PARTICLES * alignof(Data);
 	constexpr size_t size_pos = N_PARTICLES * alignof(Position);
 	constexpr size_t size_vel = N_PARTICLES * alignof(Velocity);
-	constexpr size_t size_cell_heads = N_PARTICLES * sizeof(uint32_t);
+	constexpr size_t size_cell_heads = N_PARTICLES * sizeof(int32_t);
 	constexpr size_t size_tmp = size_data + size_pos + size_vel;
 	constexpr size_t total_size = size_data + size_pos + size_vel + size_tmp + size_cell_heads + sizeof(MiniSim);
 
@@ -42,6 +42,7 @@ int main() {
 
 	auto *__restrict position = minisim->get_pos();
 	auto *__restrict velocity = minisim->get_vel();
+	auto *__restrict datas = minisim->get_datas();
 
 	std::default_random_engine generator;
 	std::uniform_int_distribution<int16_t> randPosition(250, 750);
@@ -52,6 +53,7 @@ int main() {
 		position[i].y = randPosition(generator);
 		velocity[i].dx = randVelocity(generator);
 		velocity[i].dy = randVelocity(generator);
+		datas[i].idx = i;
 	}
 
 	constexpr int iterations = 1'000; // 1'000 iterations

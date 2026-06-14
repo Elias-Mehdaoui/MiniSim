@@ -29,7 +29,7 @@ namespace minisim {
 
     struct alignas(8) Data {
         uint32_t idx; // BORDER_H * y + x; pos[datas.idx]
-        uint32_t cell_id;
+        int32_t cell_id;
     };
 
     struct alignas(64) Particles {
@@ -39,7 +39,7 @@ namespace minisim {
         Position *__restrict tmp_pos{nullptr}; // 100'000 * 4 ≈ 400KB
         Data *__restrict datas{nullptr}; // 100'000 * 8 ≈ 800KB
         Data *__restrict tmp_datas{nullptr}; // 100'000 * 8 ≈ 800KB
-        uint32_t *__restrict cells_head{nullptr}; // N_CELLS * 4 ≈ 250KB | Index of cells head in arrays
+        int32_t *__restrict cells_head{nullptr}; // N_CELLS * 4 ≈ 250KB | Index of cells head in arrays
         uint8_t padding[8]{};
     };
 
@@ -54,7 +54,10 @@ namespace minisim {
 
         bool initialize(arena_t& arena);
         void update();
-        size_t join_cells(uint32_t cell_id);
+        ALWAYS_INLINE void count_sort();
+        ALWAYS_INLINE int32_t get_next_cell(int32_t cell_id);
+        ALWAYS_INLINE size_t copy(int32_t cell_id, size_t size);
+        ALWAYS_INLINE size_t join_cells(uint32_t cell_id);
 
         ALWAYS_INLINE Data *get_datas() {
             return particles_.datas;

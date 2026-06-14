@@ -6,7 +6,7 @@
 #include <cstring>
 
 namespace minisim {
-    ALWAYS_INLINE int32_t position_to_cell_idx(uint16_t x, uint16_t y) noexcept {
+    ALWAYS_INLINE uint32_t position_to_cell_idx(uint16_t x, uint16_t y) noexcept {
         x = x >> 2;
         y = y >> 2;
         return CELL_BY_ROW * y + x;
@@ -33,20 +33,40 @@ namespace minisim {
         return C.x * C.x + C.y * C.y; // C = A - B | C^2 =
     }
 
-    ALWAYS_INLINE int32_t MiniSim::get_next_cell(int32_t cell_id) {
-        ++cell_id;
-        while (cell_id < N_CELLS && particles_.cells_head[cell_id] < 0) {
-            cell_id++;
+    bool MiniSim::initialize(arena_t &arena) {
+        constexpr size_t size_data = N_PARTICLES * alignof(Data);
+        constexpr size_t size_pos = N_PARTICLES * alignof(Position);
+        constexpr size_t size_vel = N_PARTICLES * alignof(Velocity);
+        constexpr size_t size_cell_heads = N_PARTICLES * sizeof(uint32_t);
+        constexpr size_t size_bitset = N_CHUNKS * sizeof(uint64_t);
+        constexpr size_t size_tmp = size_data + size_pos + size_vel;
+        constexpr size_t total_size = size_data + size_pos + size_vel + size_tmp + size_cell_heads + size_bitset + sizeof(MiniSim);
+
+        if (arena_get_capacity(&arena) < total_size) [[unlikely]] {
+            std::cerr << "[Error] arena must be greater than or equal to " << total_size << std::endl;
+            return false;
         }
-        if (cell_id >= N_CELLS) [[unlikely]] {
-            return -1;
+
+        particles_.vel = static_cast<Velocity *>(arena_allocate_aligned(&arena, size_vel, alignof(Velocity)));
+        particles_.tmp_vel = static_cast<Velocity *>(arena_allocate_aligned(&arena, size_vel, alignof(Velocity)));
+        particles_.pos = static_cast<Position *>(arena_allocate_aligned(&arena, size_pos, alignof(Position)));
+        particles_.tmp_pos = static_cast<Position *>(arena_allocate_aligned(&arena, size_pos, alignof(Position)));
+        particles_.datas = static_cast<Data *>(arena_allocate_aligned(&arena, size_data, alignof(Data)));
+        particles_.tmp_datas = static_cast<Data *>(arena_allocate_aligned(&arena, size_data, alignof(Data)));
+        particles_.cells_head = static_cast<uint32_t *>(arena_allocate_aligned(&arena, size_cell_heads, sizeof(uint32_t)));
+        particles_.active_cells = static_cast<uint64_t *>(arena_allocate_aligned(&arena, size_bitset, sizeof(uint64_t)));
+        if (!particles_.datas || !particles_.pos || !particles_.vel || !particles_.tmp_datas || !particles_.tmp_pos || !particles_.tmp_vel || !particles_.cells_head || !particles_.active_cells) [[unlikely]] {
+            std::cerr << "[Error] nullptr on components" << std::endl;
+            return false;
         }
-        return cell_id;
+
+        std::memset(particles_.vel, 0, total_size - sizeof(MiniSim));
+        return true;
     }
 
     ALWAYS_INLINE void MiniSim::count_sort() {
         constexpr uint32_t max_val = N_CELLS;
-        auto *count = reinterpret_cast<uint32_t *>(particles_.cells_head); // using cells_head as tmp since we will rewrite it just after
+        uint32_t *count = particles_.cells_head; // using cells_head as tmp since we will rewrite it just after
 
         for (uint32_t i = 0; i < N_PARTICLES; ++i) {
             uint32_t idx = particles_.datas[i].cell_id;
@@ -65,11 +85,14 @@ namespace minisim {
             particles_.tmp_pos[idx] = particles_.pos[i];
         }
 
-        memset(particles_.cells_head, -1, N_CELLS * sizeof(int32_t));
+        memset(particles_.cells_head, 0, N_CELLS * sizeof(int32_t));
+        memset(particles_.active_cells, 0, N_CHUNKS * sizeof(uint32_t));
+
         uint32_t j = 0;
         while (j < N_PARTICLES) {
-            int32_t curr_cell_id = particles_.datas[j].cell_id;
+            uint32_t curr_cell_id = particles_.datas[j].cell_id;
             particles_.cells_head[curr_cell_id] = j;
+            particles_.active_cells[curr_cell_id >> 6] |= 1ULL << (curr_cell_id & 63);
             while (j < N_PARTICLES && particles_.datas[j].cell_id == curr_cell_id) {
                 particles_.datas[j] = particles_.tmp_datas[j];
                 particles_.pos[j] = particles_.tmp_pos[j];
@@ -77,36 +100,6 @@ namespace minisim {
                 j++;
             }
         }
-
-    }
-
-    bool MiniSim::initialize(arena_t &arena) {
-        constexpr size_t size_data = N_PARTICLES * alignof(Data);
-        constexpr size_t size_pos = N_PARTICLES * alignof(Position);
-        constexpr size_t size_vel = N_PARTICLES * alignof(Velocity);
-        constexpr size_t size_cell_heads = N_PARTICLES * sizeof(int32_t);
-        constexpr size_t size_tmp = size_data + size_pos + size_vel;
-        constexpr size_t total_size = size_data + size_pos + size_vel + size_tmp + size_cell_heads + sizeof(MiniSim);
-
-        if (arena_get_capacity(&arena) < total_size) [[unlikely]] {
-            std::cerr << "[Error] arena must be greater than or equal to " << total_size << std::endl;
-            return false;
-        }
-
-        particles_.vel = static_cast<Velocity *>(arena_allocate_aligned(&arena, size_vel, alignof(Velocity)));
-        particles_.tmp_vel = static_cast<Velocity *>(arena_allocate_aligned(&arena, size_vel, alignof(Velocity)));
-        particles_.pos = static_cast<Position *>(arena_allocate_aligned(&arena, size_pos, alignof(Position)));
-        particles_.tmp_pos = static_cast<Position *>(arena_allocate_aligned(&arena, size_pos, alignof(Position)));
-        particles_.datas = static_cast<Data *>(arena_allocate_aligned(&arena, size_data, alignof(Data)));
-        particles_.tmp_datas = static_cast<Data *>(arena_allocate_aligned(&arena, size_data, alignof(Data)));
-        particles_.cells_head = static_cast<int32_t *>(arena_allocate_aligned(&arena, size_cell_heads, sizeof(int32_t)));
-        if (!particles_.datas || !particles_.pos || !particles_.vel || !particles_.tmp_datas || !particles_.tmp_pos || !particles_.tmp_vel || !particles_.cells_head) [[unlikely]] {
-            std::cerr << "[Error] nullptr on components" << std::endl;
-            return false;
-        }
-
-        std::memset(particles_.vel, 0, total_size - sizeof(MiniSim));
-        return true;
     }
 
     void MiniSim::update() {
@@ -124,47 +117,54 @@ namespace minisim {
         }
 
         count_sort(); // sort
-        int32_t curr_cell = 0;
-        while (curr_cell != -1) {
-            size_t size = join_cells(curr_cell);
-            for (size_t j = 0; j < size; ++j) {
-                Position& A = particles_.tmp_pos[j];
-                Velocity& A_vel = particles_.tmp_vel[j];
-                for (size_t k = j + 1; k < size; ++k) {
-                    Position& B = particles_.tmp_pos[k];
-                    Velocity& B_vel = particles_.tmp_vel[k];
+        for (int32_t chunk = 0; chunk < N_CHUNKS; ++chunk) {
+            uint64_t word = particles_.active_cells[chunk];
+            while (word != 0) {
+                const uint8_t bit = std::countl_zero(word);
+                const size_t idx = chunk * 64 + bit;
+                const uint32_t curr_cell = particles_.cells_head[idx];
+                size_t size = join_cells(curr_cell);
 
-                    Position C = sub_pos(A, B);
-                    uint32_t dist_sqr = get_dist_sqr(C);
-                    bool overlap = (dist_sqr < 16);
-                    auto dist = static_cast<uint32_t>(std::sqrt(dist_sqr));
-                    dist = std::max(dist, static_cast<uint32_t>(1));
+                for (size_t j = 0; j < size; ++j) {
+                    Position& A = particles_.tmp_pos[j];
+                    Velocity& A_vel = particles_.tmp_vel[j];
+                    for (size_t k = j + 1; k < size; ++k) {
+                        Position& B = particles_.tmp_pos[k];
+                        Velocity& B_vel = particles_.tmp_vel[k];
 
-                    Position midpoint{};
-                    midpoint.x = (A.x + B.x) >> 1;
-                    midpoint.y = (A.y + B.y) >> 1;
+                        Position C = sub_pos(A, B);
+                        uint32_t dist_sqr = get_dist_sqr(C);
+                        bool overlap = (dist_sqr < 16);
+                        auto dist = static_cast<uint32_t>(std::sqrt(dist_sqr));
+                        dist = std::max(dist, static_cast<uint32_t>(1));
 
-                    normalize(C, dist);
-                    A.x = overlap ? midpoint.x + 2 * C.x : A.x;
-                    A.y = overlap ? midpoint.y + 2 * C.y : A.y;
-                    B.x = overlap ? midpoint.x + 2 * -(C.x) : B.x;
-                    B.y = overlap ? midpoint.y + 2 * -(C.y) : B.y;
+                        Position midpoint{};
+                        midpoint.x = (A.x + B.x) >> 1;
+                        midpoint.y = (A.y + B.y) >> 1;
 
-                    A_vel.dx = overlap ? B_vel.dx : A_vel.dx;
-                    A_vel.dy = overlap ? B_vel.dy : A_vel.dy;
-                    B_vel.dx = overlap ? A_vel.dx : B_vel.dx;
-                    B_vel.dy = overlap ? A_vel.dy : B_vel.dy;
+                        normalize(C, dist);
+                        A.x = overlap ? midpoint.x + 2 * C.x : A.x;
+                        A.y = overlap ? midpoint.y + 2 * C.y : A.y;
+                        B.x = overlap ? midpoint.x + 2 * -(C.x) : B.x;
+                        B.y = overlap ? midpoint.y + 2 * -(C.y) : B.y;
+
+                        A_vel.dx = overlap ? B_vel.dx : A_vel.dx;
+                        A_vel.dy = overlap ? B_vel.dy : A_vel.dy;
+                        B_vel.dx = overlap ? A_vel.dx : B_vel.dx;
+                        B_vel.dy = overlap ? A_vel.dy : B_vel.dy;
+                    }
                 }
 
-            }
-            for (size_t j = 0; j < size; ++j) {
-                uint32_t idx = particles_.tmp_datas[j].idx;
-                particles_.datas[idx] = particles_.tmp_datas[j];
-                particles_.pos[idx] = particles_.tmp_pos[j];
-                particles_.vel[idx] = particles_.tmp_vel[j];
-            }
+                while (size > 0) {
+                    --size;
+                    uint32_t i = particles_.tmp_datas[size].idx;
+                    particles_.datas[i] = particles_.tmp_datas[size];
+                    particles_.pos[i] = particles_.tmp_pos[size];
+                    particles_.vel[i] = particles_.tmp_vel[size];
+                }
 
-            curr_cell = get_next_cell(curr_cell);
+                word &= (word - 1);
+            }
         }
 
         // for (int i = 0; i < N_PARTICLES; ++i) {
@@ -172,10 +172,8 @@ namespace minisim {
         // }
     }
 
-    ALWAYS_INLINE size_t MiniSim::copy(int32_t cell_id, size_t size) {
-        int32_t idx = particles_.cells_head[cell_id];
-        if (idx == -1)
-            return 0;
+    ALWAYS_INLINE void MiniSim::copy(uint32_t cell_id, size_t& size) {
+        uint32_t idx = particles_.cells_head[cell_id];
         while (particles_.datas[idx].cell_id == cell_id) {
             particles_.datas[idx].idx = idx;
             particles_.tmp_datas[size] = particles_.datas[idx];
@@ -184,7 +182,6 @@ namespace minisim {
             ++size;
             ++idx;
         }
-        return size;
     };
 
     // method to join contiguous particle in board into contiguous array (regroup by cell pos and vel into tmp_pos and tmp_vel) for a cell
@@ -193,18 +190,30 @@ namespace minisim {
         const uint32_t row = cell_id / CELL_BY_ROW;
         size_t size = 0;
 
-        if (col < CELL_BY_ROW - 1) {
-            size = copy(+1, size);
-        }
-        if (row < CELL_BY_ROW - 1) {
-            size = copy(CELL_BY_ROW, size);
-        }
-        if (col > 0 && row < CELL_BY_ROW - 1) {
-            size = copy(CELL_BY_ROW - 1, size);
-        }
-        if (col < CELL_BY_ROW - 1 && row < CELL_BY_ROW - 1) {
-            size = copy(CELL_BY_ROW + 1, size);
-        }
+        uint32_t r_cell_idx = cell_id + 1; // right
+        uint32_t b_cell_idx = cell_id + CELL_BY_ROW; // bottom
+        uint32_t rb_cell_idx = cell_id + CELL_BY_ROW + 1; // right bottom
+        uint32_t lb_cell_idx = cell_id + CELL_BY_ROW - 1; // left bottom
+
+        auto check = [&](uint32_t curr_cell, bool cond){
+            uint8_t cell_valid = (particles_.active_cells[curr_cell >> 6] >> (curr_cell & 63) & 1ULL) & 1;
+            cell_valid &= cond;
+            return cell_valid;
+        };
+
+        uint8_t r_valid = check(r_cell_idx, col < CELL_BY_ROW - 1);
+        uint8_t b_valid = check(r_cell_idx, row < CELL_BY_ROW - 1);
+        uint8_t rb_valid = check(r_cell_idx, col < CELL_BY_ROW - 1 && row < CELL_BY_ROW - 1);
+        uint8_t lb_valid = check(r_cell_idx, col > 0 && row < CELL_BY_ROW - 1);
+
+        if (r_valid)
+            copy(r_cell_idx, size);
+        if (b_valid)
+            copy(b_cell_idx, size);
+        if (rb_valid)
+            copy(rb_cell_idx, size);
+        if (lb_valid)
+            copy(lb_cell_idx, size);
 
         return size;
         // 250 = MAP_WIDTH / CELL_WIDTH

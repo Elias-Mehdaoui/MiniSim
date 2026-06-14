@@ -68,7 +68,7 @@ target_compile_options(main PUBLIC
         ${COMPILER_WARNINGS}
         -fno-plt
         -fstack-protector-strong
-        $<$<CONFIG:Release>:-O3 -march=native -mtune=native -fno-math-errno>
+        $<$<CONFIG:Release>:-O3 -march=native -mtune=native -fno-math-errno -ftree-vectorize>
         $<$<CONFIG:Debug>:-O1 -g3 -fno-omit-frame-pointer>
 )
 

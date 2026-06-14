@@ -17,8 +17,9 @@ int main() {
 	constexpr size_t size_pos = N_PARTICLES * alignof(Position);
 	constexpr size_t size_vel = N_PARTICLES * alignof(Velocity);
 	constexpr size_t size_cell_heads = N_PARTICLES * sizeof(int32_t);
+    constexpr size_t size_bitset = N_CHUNKS * sizeof(uint64_t);
 	constexpr size_t size_tmp = size_data + size_pos + size_vel;
-	constexpr size_t total_size = size_data + size_pos + size_vel + size_tmp + size_cell_heads + sizeof(MiniSim);
+	constexpr size_t total_size = size_data + size_pos + size_vel + size_tmp + size_cell_heads + size_bitset + sizeof(MiniSim);
 
 	arena_t *arena = arena_create(total_size);
 	if (!arena) [[unlikely]] {

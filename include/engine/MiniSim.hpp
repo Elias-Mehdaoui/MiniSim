@@ -1,5 +1,4 @@
 #pragma once
-#include <atomic>
 
 extern "C" {
 #include <arena_allocator.h>
@@ -13,6 +12,7 @@ extern "C" {
 #define CELL_SIDE 4
 #define CELL_BY_ROW (BORDER_H / CELL_SIDE)
 #define N_CELLS (CELL_BY_ROW * CELL_BY_ROW)
+#define N_CHUNKS ((N_CELLS >> 6) + 1) // 62500 bits / 64 = 976,5
 
 
 namespace minisim {
@@ -29,7 +29,7 @@ namespace minisim {
 
     struct alignas(8) Data {
         uint32_t idx; // BORDER_H * y + x; pos[datas.idx]
-        int32_t cell_id;
+        uint32_t cell_id;
     };
 
     struct alignas(64) Particles {
@@ -39,8 +39,8 @@ namespace minisim {
         Position *__restrict tmp_pos{nullptr}; // 100'000 * 4 ≈ 400KB
         Data *__restrict datas{nullptr}; // 100'000 * 8 ≈ 800KB
         Data *__restrict tmp_datas{nullptr}; // 100'000 * 8 ≈ 800KB
-        int32_t *__restrict cells_head{nullptr}; // N_CELLS * 4 ≈ 250KB | Index of cells head in arrays
-        uint8_t padding[8]{};
+        uint32_t *__restrict cells_head{nullptr}; // N_CELLS * 4 ≈ 250KB | Index of cells head in arrays
+        uint64_t *__restrict active_cells{nullptr}; // N_CHUNKS *  8 = 977 * 8 ≈ 6KB | bit mapping cells head index
     };
 
     class alignas(64) MiniSim {
@@ -55,8 +55,7 @@ namespace minisim {
         bool initialize(arena_t& arena);
         void update();
         ALWAYS_INLINE void count_sort();
-        ALWAYS_INLINE int32_t get_next_cell(int32_t cell_id);
-        ALWAYS_INLINE size_t copy(int32_t cell_id, size_t size);
+        ALWAYS_INLINE void copy(uint32_t cell_id, size_t& size);
         ALWAYS_INLINE size_t join_cells(uint32_t cell_id);
 
         ALWAYS_INLINE Data *get_datas() {

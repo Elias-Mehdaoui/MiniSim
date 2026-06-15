@@ -18,9 +18,10 @@ namespace minisim {
         return {x, y};
     }
 
-    ALWAYS_INLINE void normalize(Position& C, const uint32_t dist) {
-        C.x /= dist;
-        C.y /= dist;
+    ALWAYS_INLINE Velocity sub_vel(const Velocity& A, const Velocity& B) {
+        const int8_t dx = A.dx - B.dx;
+        const int8_t dy = A.dy - B.dy;
+        return {dx, dy};
     }
 
     ALWAYS_INLINE Position add_pos(Position& A, Position& B) {
@@ -106,11 +107,11 @@ namespace minisim {
         for (size_t i = 0; i < N_PARTICLES; ++i) { // pos += vec
             particles_.pos[i].x += particles_.vel[i].dx;
             particles_.pos[i].x = std::clamp<int16_t>(particles_.pos[i].x, 0, BORDER_W);
-            particles_.vel[i].dx *= particles_.pos[i].x == 0 || !(particles_.pos[i].x - 1000) ? -0.80 : 1;
+            particles_.vel[i].dx *= (particles_.pos[i].x == 0 || particles_.pos[i].x - 1000 == 0) ? -0.80 : 1;
 
             particles_.pos[i].y += particles_.vel[i].dy;
             particles_.pos[i].y = std::clamp<int16_t>(particles_.pos[i].y, 0, BORDER_H);
-            particles_.vel[i].dy *= particles_.pos[i].y == 0 || !(particles_.pos[i].y - 1000) ? -0.80 : 1;
+            particles_.vel[i].dy *= (particles_.pos[i].y == 0 || particles_.pos[i].y - 1000 == 0) ? -0.80 : 1;
 
             particles_.datas[i].cell_id = position_to_cell_idx(particles_.pos[i].x, particles_.pos[i].y);
             particles_.cells_head[i] = 0;
@@ -132,26 +133,40 @@ namespace minisim {
                         Position& B = particles_.tmp_pos[k];
                         Velocity& B_vel = particles_.tmp_vel[k];
 
-                        Position C = sub_pos(A, B);
-                        uint32_t dist_sqr = get_dist_sqr(C);
-                        bool overlap = (dist_sqr < 16);
+                        Position N;
+                        N = sub_pos(B, A); // normal unit vector
+                        uint32_t dist_sqr = get_dist_sqr(N);
+                        const auto overlap = (dist_sqr < 16);
+
                         auto dist = static_cast<uint32_t>(std::sqrt(dist_sqr));
                         dist = std::max(dist, static_cast<uint32_t>(1));
+                        int16_t depth = 4 - dist; // (ra + rb) = 2 + 2 = 4
 
-                        Position midpoint{};
-                        midpoint.x = (A.x + B.x) >> 1;
-                        midpoint.y = (A.y + B.y) >> 1;
+                        N.x = (N.x / dist) * !overlap; // check if the circles overlaps, if overlap == 0 all the beyond operations will result to zero = no update
+                        N.y = (N.y / dist) * !overlap;
 
-                        normalize(C, dist);
-                        A.x = overlap ? midpoint.x + 2 * C.x : A.x;
-                        A.y = overlap ? midpoint.y + 2 * C.y : A.y;
-                        B.x = overlap ? midpoint.x + 2 * -(C.x) : B.x;
-                        B.y = overlap ? midpoint.y + 2 * -(C.y) : B.y;
+                        uint16_t p_x = (N.x * depth) >> 1; // penetration vector
+                        uint16_t p_y = (N.y * depth) >> 1;
 
-                        A_vel.dx = overlap ? B_vel.dx : A_vel.dx;
-                        A_vel.dy = overlap ? B_vel.dy : A_vel.dy;
-                        B_vel.dx = overlap ? A_vel.dx : B_vel.dx;
-                        B_vel.dy = overlap ? A_vel.dy : B_vel.dy;
+                        A.x += p_x;
+                        A.y += p_y;
+                        B.x -= p_x;
+                        B.y -= p_y;
+
+                        Velocity V_n;
+                        V_n = sub_vel(A_vel, B_vel);
+                        V_n.dx *= N.x;
+                        V_n.dy *= N.y;
+
+                        uint8_t bias = depth >> 2; // assuming delta t = 1 and beta = 0.25
+                        bias = bias >> 1;
+
+                        const int16_t impulse = -(V_n.dx + V_n.dy) + bias; // assuming e=1 for elastic rebound
+
+                        A_vel.dx += impulse * N.x;
+                        A_vel.dy += impulse * N.y;
+                        B_vel.dx -= impulse * N.x;
+                        B_vel.dy -= impulse * N.y;
                     }
                 }
 
@@ -166,10 +181,6 @@ namespace minisim {
                 word &= (word - 1);
             }
         }
-
-        // for (int i = 0; i < N_PARTICLES; ++i) {
-        //     grid_[BORDER_W * particles_.pos[i].y + particles_.pos[i].x] = i;
-        // }
     }
 
     ALWAYS_INLINE void MiniSim::copy(uint32_t cell_id, size_t& size) {

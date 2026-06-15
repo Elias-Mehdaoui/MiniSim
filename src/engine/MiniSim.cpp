@@ -142,8 +142,8 @@ namespace minisim {
                         dist = std::max(dist, static_cast<uint32_t>(1));
                         int16_t depth = 4 - dist; // (ra + rb) = 2 + 2 = 4
 
-                        N.x = (N.x / dist) * !overlap; // check if the circles overlaps, if overlap == 0 all the beyond operations will result to zero = no update
-                        N.y = (N.y / dist) * !overlap;
+                        N.x = (N.x / dist) * overlap; // check if the circles overlaps, if overlap == 0 all the beyond operations will result to zero = no update
+                        N.y = (N.y / dist) * overlap;
 
                         uint16_t p_x = (N.x * depth) >> 1; // penetration vector
                         uint16_t p_y = (N.y * depth) >> 1;
